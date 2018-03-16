@@ -8,7 +8,4 @@ Tictac speeds up processing by segmenting a sequencing file into regions, which 
 
 Templates for variant callers will be available through the Thousand Variant Callers [Repo](https://github.com/deaconjs/ThousandVariantCallersRepo). Templates for utility pipelines that segment bams into intervals, and that run samtools pileup on those intervals will be available here. 
 
-Clone the repo to install, then add environmental variables for TICTAC_HOME (tictac directory) and TICTAC_QUEUE (SGE queue). 
-
-The tictac.py file is run alone to enter interactive mode. There a set of commands are elicited from the user to select a target genome and pipeline. It helps write the pipeline executable scipt with templates. The same commands 
-
+Clone the repo to install, then add environmental variables for TICTAC_HOME (tictac directory) and TICTAC_QUEUE (SGE queue). The tictac.py file is run alone to enter interactive mode. There a set of commands are elicited from the user to select a target genome and pipeline. Add template files to the tictac/tools/std_templates directory to make them available in interactive mode.
