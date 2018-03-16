@@ -7,96 +7,6 @@ import imp
 
 homebase = os.getenv('TICTAC_HOME', '.')
 
-# checks and returns input args supplied by user
-def check_input(pipeline=None):
-    if not pipeline:
-        print("Error: no pipeline given to check_input")
-        sys.exit()
-    if pipeline == 'submitjobs':
-        maxjobs = 5
-        if len(sys.argv != 2):
-            print("usage python submitjobs_script concurrent_threads (e.g. 5)")
-            sys.exit()
-        try:
-            maxjobs = int(sys.argv[1])
-        except ValueError:
-            print("supply an integer argument e.g. 5")
-            sys.exit()
-        if maxjobs > 200:
-            print("change the code to run %s (>200) threads. setting maxjobs to 200"%(maxjobs))
-            maxjobs = 200
-        return maxjobs
-
-    if pipeline == 'intervals':
-        normalbam, tumorbam, benchmark, genomefile, maxjobs, testorrun = None, None, None, None, 5, 'test'
-        if len(sys.argv) != 8:
-            print("usage: python run_pipeline.py intervals normalbam tumorbam benchmark genomefile maxjobs testorrun")
-            sys.exit()
-        # bam files first
-        if not os.path.isfile(sys.argv[2]):
-            print("supply normal bam or bam.gz file as first argument")
-            sys.exit()
-        else:
-            normalbam = sys.argv[2]
-            if not normalbam.endswith('.bam') and not normalbam.endswith('bam.gz'):
-                print("Warning: normal bam (arg 1) does not end with .bam or .bam.gz")
-                time.sleep(1)
-            if 'normal' not in normalbam:
-                print("Warning: normal bam (arg 1) does not contain the substring 'normal'")
-                time.sleep(1)
-            if 'tumor' in normalbam:
-                print("Error: Check input arguments, normal bam (arg 1) contains the substring 'tumor'.")
-                sys.exit()
-        if not os.path.isfile(sys.argv[3]):
-            print("supply tumor bam or bam.gz file as second argument")
-            sys.exit()
-        else:
-            tumorbam = sys.argv[3]
-            if not tumorbam.endswith('.bam') and not tumorbam.endswith('bam.gz'):
-                print("Warning: tumor bam (arg 2) does not end with .bam or .bam.gz")
-                time.sleep(1)
-            if 'tumor' not in tumorbam:
-                print("Warning: tumor bam (arg 2) does not contain the substring 'tumor'")
-                time.sleep(1)
-            if 'normal' in tumorbam:
-                print("Error: Check input arguments, tumor bam (arg 2) contains the substring 'normal'.")
-                sys.exit()
-        # check benchmark name
-        if not os.path.isdir("%s/benchmarks/%s"%(homebase, sys.argv[4])):
-            print("supply benchmark name (from tictac/benchmarks e.g. is3) as third argument")
-            sys.exit()
-        else:
-            benchmark = sys.argv[4]
-        # check genome file. this can probably be generated silently from the bams' reference .fai if available
-        #   instead of requiring user input
-        if not os.path.isfile(sys.argv[5]):
-            print("supply .genome file (reference .fai columns 1&2) location as fourth argument")
-            sys.exit()
-        else:
-            genomefile = sys.argv[5]
-        # check maxjobs for integer and hard limit on number of threads to keep up
-        try:
-            maxjobs = int(sys.argv[6])
-        except ValueError:
-            print("supply an integer argument e.g. 5 as fifth argument")
-            sys.exit()
-        if maxjobs > 200:
-            print("change the code to run more than 200 threads.")
-            sys.exit()
-        # last arg is required declaration of whether this is a test run or full run
-        # test simply prints out what its going to do without committing any changes
-        testorrun = sys.argv[7]
-        if testorrun != "test" and testorrun != "run":
-            print("supply 'test' or 'run' as sixth argument")
-            sys.exit()
-        else:
-            if testorrun == 'test':
-                print("test mode: splitbam.py will generate SGE submission scripts but not submit them to qsub.")
-            else:
-                print("run mode: splitbam.py will generate SGE submission scripts and submit to qsub.")
-        return normalbam, tumorbam, benchmark, genomefile, maxjobs, testorrun
-
-
 def list_targets(grep=None, quick=False):
     # list targets available                                                                                                   
     bglb, cglb = [], []
@@ -1156,19 +1066,7 @@ def caller_report(masked_or_unmasked, mut_type, greps=[]):
                     elif masked_or_unmasked == 'unmasked':
                         print("%s\t%s\t%s\t%s\t%s\t%s\t%4.3f\t%4.3f\t%4.3f\t%s\t%s\t%s\t%s"%(utpc, ufpc, usre, usma, utre, utma, float(usen), float(uspe), float(ubal), unum, date, caller, pipeline))
 
-"""
-masked:
-tpcount, fpcount, subrecs, submasked, trurecs, trumasked:
-3845 195 4040 2683 3979 353
-sensitivity, specificity, balanced accuracy: 0.966323196783,0.951732673267,0.959027935025
-number of unmasked mutations in submission: 4040
 
-unmasked:
-tpcount, fpcount, subrecs, submasked, trurecs, trumasked:
-4178 217 4395 1839 4322 10
-sensitivity, specificity, balanced accuracy: 0.966682091624,0.950625711035,0.95865390133
-number of unmasked mutations in submission: 4395
-"""
 def watch_queue(grep=None):
     monitoring = True
     grep = ""
