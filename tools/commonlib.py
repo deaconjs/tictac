@@ -790,149 +790,121 @@ def merge_vcfs(target, pipeline):
     # grab files by combined.target.pipeline.###.vcf
     vcf_dir  = "%s/results"%(pipelinebase)
 
-    # grab the vcfs, the sorted vcfs, and sort the lists. this code gets a little hairy so lots of comments
-    tvcfglb = []  # original vcfs
-    tsvcfglb = [] # sorted vcfs
-    t2vcfglb = [] # original vcfs ordered by index
-    t2svcfglb = [] # sorted vcfs ordered by index
+    # glob has some weird regex that requires iteratively adding digits per order of magnitude
+    # automatically checks for .gz versions
+    def ranged_glob(strlist1, strlist2, magnitude):
+        holder = []
+        for i in range(1, magnitude):
+            holder += glob.glob('.'.join(strlist1 + '[0-9]'*i + strlist2))
+        for i in range(1, magnitude):
+            holder += glob.glob('.'.join(strlist1 + '[0-9]'*i + strlist2 + ['.gz']))
+        return sorted(holder, key=lambda x: int(x.split('.')[-len(strlist2)]))
 
-    isvarscan, islofreq = False, False
-    if target.startswith('varscan'):
-        isvarscan = True
-    if target.startswith('lofreq'):
-        islofreq = True
-
-    # grab the vcfs next, start by checking if working with varscan results
-    # cover varscan with extra ".vcf.snp" tokens
-    # grab files by combined.target.pipeline.###.vcf.snp.vcf
-    tvcfglb   = glob.glob('%s/combined.%s.%s.[0-9999].vcf.snp.vcf'%(vcf_dir, target, pipeline)) + glob.glob("%s/combined.%s.%s.[0-9999][0-9999].vcf.snp.vcf"%(vcf_dir, target, pipeline)) + glob.glob("%s/combined.%s.%s.[0-9999][0-9999][0-9999].vcf.snp.vcf"%(vcf_dir, target, pipeline))
-    # grab files by combined.target.pipeline.###.vcf.snp.sorted.vcf
-    tsvcfglb   = glob.glob('%s/combined.%s.%s.[0-9999].vcf.snp.sorted.vcf'%(vcf_dir, target, pipeline)) + glob.glob("%s/combined.%s.%s.[0-9999][0-9999].vcf.snp.sorted.vcf"%(vcf_dir, target, pipeline)) + glob.glob("%s/combined.%s.%s.[0-9999][0-9999][0-9999].vcf.snp.sorted.vcf"%(vcf_dir, target, pipeline))
-    # sort the lists
-    t2vcfglb = sorted(tvcfglb, key=lambda x: int(x.split('.')[-4]))
-    t2svcfglb = sorted(tsvcfglb, key=lambda x: int(x.split('.')[-5]))
-
-    if len(t2vcfglb) > 0:
-        isvarscan = True
-
-    if not isvarscan:
-        # callers/lofreq_parallel/is3/results/combined.lofreq_parallel.is3.199.vcfsomatic_final_minus-dbsnp.indels.vcf.gz
-        tvcfglb = glob.glob('%s/combined.%s.%s.[0-9].vcfsomatic_final_minus-dbsnp.snvs.vcf.gz'%(vcf_dir, target, pipeline)) + glob.glob('%s/combined.%s.%s.[0-9][0-9].vcfsomatic_final_minus-dbsnp.snvs.vcf.gz'%(vcf_dir, target, pipeline)) + glob.glob('%s/combined.%s.%s.[0-9][0-9][0-9].vcfsomatic_final_minus-dbsnp.snvs.vcf.gz'%(vcf_dir, target, pipeline))
-        t2vcfglb = sorted(tvcfglb, key=lambda x: int(x.split('.')[-5]))
-
-        if len(t2vcfglb) > 0:
-            islofreq = True
-
-
-    if not isvarscan and not islofreq:  # no varscan files found
-        # cover normal case including mutect, muse, sniper, etc
-        tvcfglb   = glob.glob('%s/combined.%s.%s.[0-9999].vcf'%(vcf_dir, target, pipeline)) + glob.glob("%s/combined.%s.%s.[0-9999][0-9999].vcf"%(vcf_dir, target, pipeline)) + glob.glob("%s/combined.%s.%s.[0-9999][0-9999][0-9999].vcf"%(vcf_dir, target, pipeline))
-        tsvcfglb   = glob.glob('%s/combined.%s.%s.[0-9999].sorted.vcf'%(vcf_dir, target, pipeline)) + glob.glob("%s/combined.%s.%s.[0-9999][0-9999].sorted.vcf"%(vcf_dir, target, pipeline)) + glob.glob("%s/combined.%s.%s.[0-9999][0-9999][0-9999].sorted.vcf"%(vcf_dir, target, pipeline))
-        t2vcfglb = sorted(tvcfglb, key=lambda x: int(x.split('.')[-2]))
-        t2svcfglb = sorted(tsvcfglb, key=lambda x: int(x.split('.')[-3]))
-    
-
-    print("varscan=%s, lofreq=%s, len vcfs = %s"%(isvarscan, islofreq, len(t2vcfglb)))
-    #sys.exit()
-
-    if len(t2vcfglb) == 0:
-        tvcfglb = glob.glob('%s/*.vcf'%(vcf_dir))
-        t2vcfglb = sorted(tvcfglb, key=lambda x:int(x.split('/')[-1].split('.')[0]))
-
-    # check if .vcfs are directories if so assume somaticseq and then they contain SNP and INDEL vcfs
     aredirs = False      # are the vcfs directories?
-    ss_trained = False   # is somaticseq trained version?
-    for t in tvcfglb:
-        if t.endswith('vcf') and os.path.isdir(t):
-            aredirs = True
 
-    if aredirs and "SS" in target or 'somaticseq' in target:
-        # covers somaticseq
-        tsnpglb = glob.glob('%s/*.vcf/*SNV*.vcf'%(vcf_dir)) + glob.glob('%s/*.vcf/*/*SNV*.vcf'%(vcf_dir))
-        tindelglb = glob.glob('%s/*.vcf/*INDEL*.vcf'%(vcf_dir)) + glob.glob('%s/*.vcf/*/*INDEL*.vcf'%(vcf_dir))
-        #print tsnpglb, tindelglb
-        # callers/somaticseq_v1/aml_100x/results/103.vcf/Merge_MVJSD/Trained.sSNV.vcf
-        tvcfglb = []
-        for tglb in tsnpglb + tindelglb:
+    caller = None
+    known_callers = ['varscan', 'lofreq', 'muse', 'somaticseq', 'strelka', 'sniper', 'vardict', 'mutect', 'mutect2', 'jointsnvmix']
+    for c in known_callers:
+        if target.startswith(c):
+            caller = c
+
+    vcfglb = []  # original vcfs
+    svcfglb = [] # sorted vcfs
+
+    # look for varscan first 
+    vcfglb = ranged_glob(['%s/combined'%(vcf_dir), target, pipeline], ['vcf', 'snp', 'vcf'], 5) # look for unsorted
+    svcfglb = ranged_glob(['%s/combined'%(vcf_dir), target, pipeline], ['vcf', 'snp', 'sorted', 'vcf'], 5) # and sorted
+    if len(vcfglb) >  0 or len(svcfglb) > 0:
+        caller = 'varscan'
+
+    if not caller:
+        vcfglb = ranged_glob(['%s/combined'%(vcf_dir), target, pipeline], ['vcfsomatic_final_minus-dbsnp', 'snvs', 'vcf'], 5)
+        svcfglb = ranged_glob(['%s/combined'%(vcf_dir), target, pipeline], ['vcfsomatic_final_minus-dbsnp', 'snvs', 'sorted', 'vcf'], 5)
+        if len(vcfglb) > 0 or len(svcfglb) > 0:
+            caller = 'lofreq'
+
+    if not caller: 
+        # cover normal case including mutect, muse, sniper, etc
+        vcfglb = ranged_glob(['%s/combined'%(vcf_dir), target, pipeline], ['vcf'], 5)
+        svcfglb = ranged_glob(['%s/combined'%(vcf_dir), target, pipeline], ['sorted', 'vcf'], 5)
+        caller = 'general'    
+
+    if len(vcfglb) == 0 and len(svcfglb) == 0:
+        tvcfglb = glob.glob('%s/*.vcf'%(vcf_dir))
+        vcfglb = sorted(tvcfglb, key=lambda x:int(x.split('/')[-1].split('.')[0]))
+        caller = 'unknown'
+
+    print("caller %s covers %s files, %s sorted'%(caller, len(vcfglb), len(svcfglb)))
+
+
+    # handle strelka and somaticseq first
+    aredirs = False
+    for t in vcfglb:
+        if t.endswith('vcf') and os.path.isdir(t):
+            aredirs = True  
+
+    if aredirs and (target.startswith('SS') or caller == 'somaticseq'):
+        # first determine whether trained or not
+        ss_trained = False
+        snpglb = glob.glob('%s/*.vcf/*SNV*.vcf'%(vcf_dir)) + glob.glob('%s/*.vcf/*/*SNV*.vcf'%(vcf_dir))
+        indelglb = glob.glob('%s/*.vcf/*INDEL*.vcf'%(vcf_dir)) + glob.glob('%s/*.vcf/*/*INDEL*.vcf'%(vcf_dir))
+        vcfglb = snpglb + indelglb
+        for tglb in vcfglb:
             if "Trained" in tglb:
                 ss_trained = True
-        if not ss_trained:
-            tsnpglb = glob.glob('%s/*.vcf/Untrained*SNV*.vcf'%(vcf_dir))
-            tindelglb = glob.glob('%s/*.vcf/Untrained*INDEL*.vcf'%(vcf_dir))
-        else:
-            tsnpglb = glob.glob('%s/*.vcf/Trained*SNV*.vcf'%(vcf_dir)) + glob.glob('%s/*.vcf/*/Trained*SNV*.vcf'%(vcf_dir))
-            tindelglb = glob.glob('%s/*.vcf/Trained*INDEL*.vcf'%(vcf_dir)) + glob.glob('%s/*.vcf/*/Trained*INDEL*.vcf'%(vcf_dir))
-            #tsnpglb = glob.glob('%s/*.vcf/BINA_somatic.snp.vcf'%(vcf_dir)) + glob.glob('%s/*.vcf/Merge_MVJSD/BINA_somatic.snp.vcf'%(vcf_dir))
-            #tindelglb = glob.glob('%s/*.vcf/BINA_somatic.indel.vcf'%(vcf_dir)) + glob.glob('%s/*.vcf/Merge_MVJSD/BINA_somatic.indel.vcf'%(vcf_dir))
-
+        # and get the files from trained or untrained file handles
         if ss_trained:
-            print("compiling %s trained somaticseq results"%(len(tsnpglb+tindelglb)))
+            snpglb = glob.glob('%s/*.vcf/Trained*SNV*.vcf'%(vcf_dir)) + glob.glob('%s/*.vcf/*/Trained*SNV*.vcf'%(vcf_dir))
+            indelglb = glob.glob('%s/*.vcf/Trained*INDEL*.vcf'%(vcf_dir)) + glob.glob('%s/*.vcf/*/Trained*INDEL*.vcf'%(vcf_dir))
         else:
-            print("compiling %s untrained somaticseq results"%(len(tsnpglb+tindelglb)))
-        tvcfglb = tsnpglb
-        if len(tvcfglb) > 0:
-            # construct final vcffile
-            mergedvcfbase = "%s/final"%(pipelinebase)
-            merged_vcf_out = "%s/merged.%s.%s.vcf"%(mergedvcfbase, target, pipeline)
-            _run_merge(target, pipeline, tvcfglb, merged_vcf_out)
+            snpglb = glob.glob('%s/*.vcf/Untrained*SNV*.vcf'%(vcf_dir))
+            indelglb = glob.glob('%s/*.vcf/Untrained*INDEL*.vcf'%(vcf_dir))
+        if len(snpglb) > 0:
+            merged_vcf_out = "%s/final/merged.%s.%s.snp.vcf"%(pipelinebase, target, pipeline)
+            _run_merge(target, pipeline, snpglb, merged_vcf_out)
+        if len(indelglb) > 0:
+            merged_vcf_out = "%s/final/merged.%s.%s.indel.vcf"%(pipelinebase, target, pipeline)
+            _run_merge(target, pipeline, indelglb, merged_vcf_out)
         sys.exit()
 
-    if aredirs and 'strelka' in target:
-        tsnpglb = glob.glob('%s/*.vcf/results/variants/somatic.snvs.vcf.gz'%(vcf_dir))
-        tindelglb = glob.glob('%s/*.vcf/results/variants/somatic.indels.vcf.gz'%(vcf_dir))
-        tvcfglb = tsnpglb
-        if len(tvcfglb) > 0:
-            mergedvcfbase = "%s/final"%(pipelinebase)
-            merged_vcf_out = "%s/merged.%s.%s.vcf"%(mergedvcfbase, target, pipeline)
-            _run_merge(target, pipeline, tvcfglb, merged_vcf_out)
+    if aredirs and caller == 'strelka':
+        snpglb = glob.glob('%s/*.vcf/results/variants/somatic.snvs.vcf.gz'%(vcf_dir))
+        indelglb = glob.glob('%s/*.vcf/results/variants/somatic.indels.vcf.gz'%(vcf_dir))
+        if len(snpglb) > 0:
+            merged_vcf_out = "%s/final/merged.%s.%s.snp.vcf"%(pipelinebase, target, pipeline)
+            _run_merge(target, pipeline, snpglb, merged_vcf_out)
+        if len(indelglb) > 0:
+            merged_vcf_out = "%s/final/merged.%s.%s.indel.vcf"%(pipelinebase, target, pipeline)
+            _run_merge(target, pipeline, indelglb, merged_vcf_out)
         sys.exit()
         
-    # if not directories (i.e. not somaticseq) then sort any unsorted vcfs
+    # next sort any unsorted vcfs
     orig_indices   = {}
     sorted_indices = {}
     index_index = -2
-    if isvarscan:
+    if caller == 'varscan':
         index_index = -4
-    if islofreq:
+    if caller == 'lofreq':
         index_index = -5
-    for tv in tvcfglb:
-        orig_indices[int(tv.split('.')[index_index])] = tv
-    for tsv in tsvcfglb:
-        sorted_indices[int(tsv.split('.')[index_index-1])] = tsv
-
-    orig_keys = list(orig_indices.keys())
-    orig_keys.sort()
-    sorted_keys = list(sorted_indices.keys())
-    sorted_keys.sort()
-
-    callers_dir        = "%s/callers"%(homebase)
-    vcf_base           = "/%s/%s/%s/results/%s.%s.%s"%(callers_dir, target, pipeline, "combined", target, pipeline)
+    for v in vcfglb:
+        orig_indices[int(v.split('.')[index_index])] = v
+    for sv in svcfglb:
+        sorted_indices[int(sv.split('.')[index_index-1])] = sv
+    orig_keys = list(orig_indices.keys()).sort()
+    sorted_keys = list(sorted_indices.keys()).sort()
 
     seqdict = '%s/reference/genomefiles/b37.dict'%(homebase)
-    if target.startswith('mutect') or target.startswith('mutect2'):
+    if caller in ['mutect', 'mutect2']:
         seqdict = '%s/reference/genomefiles/b37_decoy.dict'%(homebase)
 
-    print(tvcfglb)
-    print(tsvcfglb)
-    print(orig_indices)
-    min_key = min(orig_keys)
-    max_key = max(orig_keys)
-
-    sort_list = []
-    for o in orig_keys:
-        if o not in sorted_keys:
-            sort_list.append(o)
-    if sort_list > 0:
-        print("fixing vcfs and sorting for %s indices"%(len(sort_list)))
-
-    for orig_key in range(min_key, max_key+1):
+    for orig_key in range(min(orig_keys), max(orig_keys)+1):
         if orig_key not in orig_keys:
             print("no unsorted version of index %s found, skipping"%(orig_key))
             continue
         if orig_key not in sorted_keys:
             # sort the vcf file
             # start by fixing unruly vcfs
-            if target.startswith('muse'):
+            if caller == 'muse':
                 outlines = []
                 lines = open(orig_indices[orig_key], 'r').readlines()
                 seen_NC = False
@@ -950,11 +922,10 @@ def merge_vcfs(target, pipeline):
                 outf = open("%s.tmp"%(orig_indices[orig_key]), 'w')
                 outf.writelines(outlines)
                 outf.close()
-                time.sleep(0.1)
+                time.sleep(0.01)
                 os.system('mv %s.tmp %s'%(orig_indices[orig_key], orig_indices[orig_key]))
-                time.sleep(0.1)
 
-            elif target.startswith('varscan'):
+            elif caller == 'varscan':
                 outlines = []
                 lines = open(orig_indices[orig_key], 'r').readlines()
                 found_nonstandard = False
@@ -974,73 +945,58 @@ def merge_vcfs(target, pipeline):
                     outf = open("%s.tmp"%(orig_indices[orig_key]), 'w')
                     outf.writelines(outlines)
                     outf.close()
-                    time.sleep(0.1)
+                    time.sleep(0.05)
                     os.system('mv %s.tmp %s'%(orig_indices[orig_key], orig_indices[orig_key]))
-                    time.sleep(0.1)
-            elif target.startswith('jsm'):
+            elif caller == 'jointsnvmix' or target.startswith('jsm'):
                 tmpname = '%s.tmp'%('.'.join(orig_indices[orig_key].split('.')[:-1]))
                 os.system('mv %s %s'%(orig_indices[orig_key], tmpname))
                 time.sleep(0.05)
                 os.system('%s/reference/somaticseq/JSM2VCF.sh %s > %s'%(homebase, tmpname, orig_indices[orig_key]))
-                time.sleep(0.05)
+
 
             # rebuild the sorted filename
             tokens = orig_indices[orig_key].split('.')
             sorted_fname = '%s.sorted.vcf'%('.'.join(tokens[:-1]))
-            cmd = 'module load jdk/1.8.0_111; java -jar /DCEG/Scimentis/tools2/picard/picard.jar SortVcf I=%s O=%s SEQUENCE_DICTIONARY=%s'%(orig_indices[orig_key], sorted_fname, seqdict)
+            cmd = 'java -jar %s/tools/picard/picard.jar SortVcf I=%s O=%s SEQUENCE_DICTIONARY=%s'%(homebase,  orig_indices[orig_key], sorted_fname, seqdict)
             print(cmd)
             os.system(cmd)
 
+    mergevcfglb   = []
+    mergeindelglb = []
+    mergesnpglb   = []
 
-    vcfglb   = []
-    indelglb = []
-    snpglb   = []
-
-    for tv in t2vcfglb:
-        #if tv not in t2indelglb and tv not in t2snpglb:
+    for tv in vcfglb:
         sorted_tv = '%s.sorted.vcf'%('.'.join(tv.split('.')[:-1]))
         if os.path.isfile(sorted_tv) and os.path.getsize(sorted_tv) > 0:
-            vcfglb.append(sorted_tv)
+            mergevcfglb.append(sorted_tv)
         else:
             print("file %s does not exist or is size zero"%(tv))
-    #for tv in t2indelglb:
-    #    if os.path.isfile(tv) and os.path.getsize(tv) > 0:
-    #        indelglb.append(tv)
-    #    else:
-    #        print "file %s does not exist or is size zero"%(tv)
-    #for tv in t2snpglb:
-    #    if os.path.isfile(tv) and os.path.getsize(tv) > 0:
-    #        snpglb.append(tv)
-    #    else:
-    #        print "file %s does not exist or is size zero"%(tv)
+        if 'indel' in sorted_tv.split('.'):
+            mergeindelglb.append(sorted_tv)
+        if 'snp' in sorted_tv.split('.'):
+            mergesnpglb.append(sorted_tv)
 
     # check for output directory and contents
     if not os.path.isdir(vcf_dir):
         print("vcf_dir %s must point to a directory with decompressed .vcf files to merge"%(vcf_dir))
         sys.exit()
-    if len(vcfglb) == 0 and len(indelglb) == 0 and len(snpglb) == 0:
+
+    if len(mergevcfglb) == 0 and len(mergeindelglb) == 0 and len(mergesnpglb) == 0:
         print("vcf_dir %s must contain some decompressed .vcf and/or .snp.vcf and .indel.vcf files to merge"%(vcf_dir))
         sys.exit()
 
+    # and merge
+    if len(mergevcfglb) > 0:
+        merged_vcf_out = "%s/final/merged.%s.%s.vcf"%(pipelinebase, target, pipeline)
+        _run_merge(target, pipeline, mergevcfglb, merged_vcf_out)
 
-    if len(vcfglb) > 0:
-        # construct final vcffile
-        mergedvcfbase = "%s/final"%(pipelinebase)
-        merged_vcf_out = "%s/merged.%s.%s.vcf"%(mergedvcfbase, target, pipeline)
-        _run_merge(target, pipeline, vcfglb, merged_vcf_out)
+    if len(mergesnpglb) > 0:
+        merged_vcf_out = "%s/final/merged.%s.%s.snp.vcf"%(pipelinebase, target, pipeline)
+        _run_merge(target, pipeline, mergesnpglb, merged_vcf_out)
 
-    if len(snpglb) > 0:
-        # construct final snp file
-        mergedvcfbase = "%s/final"%(pipelinebase)
-        merged_vcf_out = "%s/merged.%s.%s.snp.vcf"%(mergedvcfbase, target, pipeline)
-        _run_merge(target, pipeline, snpglb, merged_vcf_out)
-
-    if len(indelglb) > 0:
-        # construct final indel file
-        mergedvcfbase = "%s/final"%(pipelinebase)
-        merged_vcf_out = "%s/merged.%s.%s.indel.vcf"%(mergedvcfbase, target, pipeline)
-        _run_merge(target, pipeline, indelglb, merged_vcf_out)
-
+    if len(mergeindelglb) > 0:
+        merged_vcf_out = "%s/final/merged.%s.%s.indel.vcf"%(pipelinebase, target, pipeline)
+        _run_merge(target, pipeline, mergeindelglb, merged_vcf_out)
 
 
 def compare_vcfs_to_truth(target, pipeline, truthvcf, variant_class=None):
