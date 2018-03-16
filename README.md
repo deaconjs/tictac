@@ -1,7 +1,6 @@
 
 
-This is the home of tictac
-
+This is the home of tictac.
 
 Tictac automates fast variant calling. Pipelines are ok for target, exome, whole genome, somatic, germline, pretty much any variant calling. Tictac runs on local machines for now, but soon will be cloud-optional.
 
